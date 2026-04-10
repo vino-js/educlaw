@@ -275,9 +275,14 @@ jobs:
           
           echo "✓ 公证完成"
           
-          echo "Staple..."
+          # 先对 .app 进行 staple（在打包成 DMG 之前）
+          echo "Staple .app..."
+          xcrun stapler staple "$APP_PATH"
+          echo "✓ .app Staple 完成"
+          
+          echo "Staple DMG..."
           xcrun stapler staple "$DMG_NAME"
-          echo "✓ Staple 完成"
+          echo "✓ DMG Staple 完成"
           
           mkdir -p ../output
           mv "$DMG_NAME" ../output/
