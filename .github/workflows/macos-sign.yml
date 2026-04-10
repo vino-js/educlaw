@@ -174,7 +174,8 @@ jobs:
             
             # 签名 Electron Framework 本身（必须先签名子文件）
             echo "  签名 Electron Framework.framework..."
-            codesign --force --sign "$IDENTITY" --options runtime --entitlements "$ENTITLEMENTS_PATH" "$ELECTRON_FRAMEWORK"
+            # 注意：不要给 Electron Framework 添加 entitlements，避免 JIT 兼容性问题
+            codesign --force --sign "$IDENTITY" --options runtime "$ELECTRON_FRAMEWORK"
           fi
           
           # 3. 签名 Squirrel.framework
@@ -202,13 +203,15 @@ jobs:
           echo "  签名 Helper apps..."
           for helper in "$APP_PATH/Contents/Frameworks"/*\ Helper*.app; do
             if [ -d "$helper" ]; then
-              echo "    签名: $(basename $helper)"
-              codesign --force --sign "$IDENTITY" --options runtime --entitlements "$ENTITLEMENTS_PATH" "$helper"
+              echo "    签名：$(basename $helper)"
+              # 注意：不要给 Helper apps 添加 entitlements
+              codesign --force --sign "$IDENTITY" --options runtime "$helper"
             fi
           done
           
           # 6. 签名整个 .app
           echo "签名 .app..."
+          # 只对 .app 本身应用 entitlements（主程序需要 JIT）
           codesign --deep --force --sign "$IDENTITY" --options runtime --entitlements "$ENTITLEMENTS_PATH" "$APP_PATH"
           
           echo "验证签名..."
