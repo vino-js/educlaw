@@ -90,7 +90,25 @@ jobs:
           
           echo "使用证书：$IDENTITY"
           
-          # 签名
+          # 先单独签名 Squirrel.framework 中的可执行文件（Sparkle 自动更新框架）
+          SQUIRREL_FRAMEWORK="$APP_PATH/Contents/Frameworks/Squirrel.framework"
+          if [ -d "$SQUIRREL_FRAMEWORK" ]; then
+            echo "签名 Squirrel.framework..."
+            
+            # 签名 ShipIt
+            SHIPIT="$SQUIRREL_FRAMEWORK/Versions/A/Resources/ShipIt"
+            if [ -f "$SHIPIT" ]; then
+              echo "  签名 ShipIt..."
+              codesign --force --sign "$IDENTITY" --options runtime "$SHIPIT"
+            fi
+            
+            # 签名 Squirrel.framework 本身
+            codesign --force --sign "$IDENTITY" --options runtime "$SQUIRREL_FRAMEWORK"
+            echo "  ✓ Squirrel.framework 签名完成"
+          fi
+          
+          # 签名整个 .app
+          echo "签名 .app..."
           codesign --deep --force --sign "$IDENTITY" --options runtime "$APP_PATH"
           
           # 验证
