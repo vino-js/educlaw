@@ -138,6 +138,17 @@ jobs:
                 fi
               done
             fi
+            # 签名 Helpers
+            HELPERS_DIR="$ELECTRON_FRAMEWORK/Versions/A/Helpers"
+            if [ -d "$HELPERS_DIR" ]; then
+              echo "  签名 Electron Framework Helpers..."
+              for helper in "$HELPERS_DIR"/*; do
+                if [ -f "$helper" ]; then
+                  echo "    签名: $(basename $helper)"
+                  codesign --force --sign "$IDENTITY" --options runtime "$helper"
+                fi
+              done
+            fi
           fi
           
           # 3. 签名 Squirrel.framework
