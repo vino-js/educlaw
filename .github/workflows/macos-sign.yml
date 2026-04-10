@@ -203,7 +203,14 @@ jobs:
           DMG_NAME="EduClaw_${{ github.event.inputs.version }}_${{ matrix.arch }}.dmg"
           
           echo "创建 DMG..."
-          hdiutil create -volname "EduClaw" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_NAME"
+          
+          mkdir -p dmg_temp
+          cp -R "$APP_PATH" dmg_temp/
+          ln -s /Applications dmg_temp/Applications
+          
+          hdiutil create -volname "EduClaw" -srcfolder dmg_temp -ov -format UDZO "$DMG_NAME"
+          rm -rf dmg_temp
+          
           echo "✓ DMG 创建完成: $DMG_NAME"
           
           echo "签名 DMG..."
