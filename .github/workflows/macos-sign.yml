@@ -113,10 +113,28 @@ jobs:
           echo "✓ DMG 创建完成: $DMG_NAME"
           
           echo "公证 DMG..."
-          xcrun notarytool submit "$DMG_NAME" --wait \
+          SUBMISSION_OUTPUT=$(xcrun notarytool submit "$DMG_NAME" --wait \
             --issuer "$APPLE_API_ISSUER" \
             --key-id "$APPLE_API_KEY" \
-            --key "$APPLE_API_KEY_PATH"
+            --key "$APPLE_API_KEY_PATH" 2>&1)
+          
+          echo "$SUBMISSION_OUTPUT"
+          
+          # 提取 submission ID 和状态
+          SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | grep "id:" | head -1 | awk '{print $2}')
+          STATUS=$(echo "$SUBMISSION_OUTPUT" | grep "status:" | awk '{print $2}')
+          
+          echo "Submission ID: $SUBMISSION_ID"
+          echo "Status: $STATUS"
+          
+          if [ "$STATUS" = "Invalid" ]; then
+            echo "❌ 公证失败，获取详细日志..."
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --issuer "$APPLE_API_ISSUER" \
+              --key-id "$APPLE_API_KEY" \
+              --key "$APPLE_API_KEY_PATH"
+            exit 1
+          fi
           
           echo "✓ 公证完成"
           
