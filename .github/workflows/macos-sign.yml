@@ -3,26 +3,51 @@ name: macOS Sign & Notarize
 on:
   workflow_dispatch:
     inputs:
-      app_url:
-        description: '未签名 ZIP 的下载链接（包含 .app 文件）'
-        required: true
+      arm64_url:
+        description: 'ARM64 ZIP 下载链接'
+        required: false
+      x64_url:
+        description: 'x64 ZIP 下载链接'
+        required: false
       version:
         description: '版本号（例如：0.1.0）'
         required: true
         default: '0.1.0'
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          # 构建矩阵，只包含有 URL 的架构
+          ARCHS=""
+          if [ -n "${{ github.event.inputs.arm64_url }}" ]; then
+            ARCHS="${ARCHS}{\"arch\":\"arm64\",\"url\":\"${{ github.event.inputs.arm64_url }}\"},"
+          fi
+          if [ -n "${{ github.event.inputs.x64_url }}" ]; then
+            ARCHS="${ARCHS}{\"arch\":\"x64\",\"url\":\"${{ github.event.inputs.x64_url }}\"},"
+          fi
+          # 移除末尾逗号
+          ARCHS="${ARCHS%,}"
+          echo "matrix={\"include\":[$ARCHS]}" >> $GITHUB_OUTPUT
+
   sign-and-notarize:
+    needs: prepare
     runs-on: macos-latest
+    strategy:
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      fail-fast: false
     
     steps:
-      - name: Download and extract app
+      - name: Download and extract app (${{ matrix.arch }})
         run: |
           mkdir -p build
-          echo "下载 ZIP 文件..."
-          curl -L "${{ github.event.inputs.app_url }}" -o build/unsigned.zip
+          echo "下载 ${{ matrix.arch }} ZIP 文件..."
+          curl -L "${{ matrix.url }}" -o build/unsigned.zip
           
-          # 检查文件大小
           SIZE=$(stat -f%z build/unsigned.zip)
           echo "文件大小: $SIZE bytes"
           
@@ -35,7 +60,6 @@ jobs:
           cd build
           unzip unsigned.zip
           
-          # 找到 .app 文件
           APP_PATH=$(find . -name "*.app" -type d | head -1)
           echo "找到 .app: $APP_PATH"
           
@@ -72,15 +96,13 @@ jobs:
           mkdir -p ~/private_keys
           echo -n "$APPLE_API_KEY_CONTENT" > ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
 
-      - name: Sign app
+      - name: Sign app (${{ matrix.arch }})
         run: |
           cd build
           
-          # 找到 .app
           APP_PATH=$(find . -name "*.app" -type d | head -1)
           echo "签名 .app: $APP_PATH"
           
-          # 获取证书
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
           
           if [ -z "$IDENTITY" ]; then
@@ -89,11 +111,9 @@ jobs:
           fi
           
           echo "使用证书：$IDENTITY"
-          
-          # 签名所有嵌套的二进制文件和动态库（从内到外）
           echo "签名嵌套的二进制文件..."
           
-          # 1. 签名 Resources/binaries 中的 Engine 二进制
+          # 1. 签名 Engine 二进制
           ENGINE_BINARIES_DIR="$APP_PATH/Contents/Resources/binaries"
           if [ -d "$ENGINE_BINARIES_DIR" ]; then
             echo "  签名 Engine 二进制文件..."
@@ -105,7 +125,7 @@ jobs:
             done
           fi
           
-          # 2. 签名 Electron Framework 中的动态库
+          # 2. 签名 Electron Framework 动态库
           ELECTRON_FRAMEWORK="$APP_PATH/Contents/Frameworks/Electron Framework.framework"
           if [ -d "$ELECTRON_FRAMEWORK" ]; then
             echo "  签名 Electron Framework 动态库..."
@@ -120,7 +140,7 @@ jobs:
             fi
           fi
           
-          # 3. 签名 Squirrel.framework 中的可执行文件
+          # 3. 签名 Squirrel.framework
           SQUIRREL_FRAMEWORK="$APP_PATH/Contents/Frameworks/Squirrel.framework"
           if [ -d "$SQUIRREL_FRAMEWORK" ]; then
             echo "  签名 Squirrel.framework..."
@@ -132,7 +152,7 @@ jobs:
             codesign --force --sign "$IDENTITY" --options runtime "$SQUIRREL_FRAMEWORK"
           fi
           
-          # 4. 签名所有其他 framework
+          # 4. 签名其他 frameworks
           echo "  签名其他 frameworks..."
           for framework in "$APP_PATH/Contents/Frameworks"/*.framework; do
             if [ -d "$framework" ] && [ "$framework" != "$SQUIRREL_FRAMEWORK" ]; then
@@ -141,7 +161,7 @@ jobs:
             fi
           done
           
-          # 5. 签名所有 Helper app
+          # 5. 签名 Helper apps
           echo "  签名 Helper apps..."
           for helper in "$APP_PATH/Contents/Frameworks"/*\ Helper*.app; do
             if [ -d "$helper" ]; then
@@ -150,16 +170,15 @@ jobs:
             fi
           done
           
-          # 6. 最后签名整个 .app
+          # 6. 签名整个 .app
           echo "签名 .app..."
           codesign --deep --force --sign "$IDENTITY" --options runtime "$APP_PATH"
           
-          # 验证
           echo "验证签名..."
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           echo "✓ .app 签名完成"
 
-      - name: Create and notarize DMG
+      - name: Create and notarize DMG (${{ matrix.arch }})
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -167,12 +186,18 @@ jobs:
         run: |
           cd build
           
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
+          
           APP_PATH=$(find . -name "*.app" -type d | head -1)
-          DMG_NAME="EduClaw_${{ github.event.inputs.version }}_signed.dmg"
+          DMG_NAME="EduClaw_${{ github.event.inputs.version }}_${{ matrix.arch }}.dmg"
           
           echo "创建 DMG..."
           hdiutil create -volname "EduClaw" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_NAME"
           echo "✓ DMG 创建完成: $DMG_NAME"
+          
+          echo "签名 DMG..."
+          codesign --force --sign "$IDENTITY" "$DMG_NAME"
+          echo "✓ DMG 签名完成"
           
           echo "公证 DMG..."
           SUBMISSION_OUTPUT=$(xcrun notarytool submit "$DMG_NAME" --wait \
@@ -182,14 +207,12 @@ jobs:
           
           echo "$SUBMISSION_OUTPUT"
           
-          # 提取 submission ID 和状态
           SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | grep "id:" | head -1 | sed 's/.*id: //' | tr -d ' ')
           STATUS=$(echo "$SUBMISSION_OUTPUT" | grep "status:" | sed 's/.*status: //' | tr -d ' ')
           
           echo "Submission ID: $SUBMISSION_ID"
           echo "Status: $STATUS"
           
-          # 无论状态如何，都获取日志以便诊断
           echo "获取公证日志..."
           xcrun notarytool log "$SUBMISSION_ID" \
             --issuer "$APPLE_API_ISSUER" \
@@ -209,13 +232,12 @@ jobs:
           xcrun stapler staple "$DMG_NAME"
           echo "✓ Staple 完成"
           
-          # 移动到输出目录
           mkdir -p ../output
           mv "$DMG_NAME" ../output/
           
           ls -la ../output/
 
-      - name: Verify
+      - name: Verify (${{ matrix.arch }})
         run: |
           cd output
           DMG_PATH=$(find . -name "*.dmg" | head -1)
@@ -233,10 +255,10 @@ jobs:
           
           echo "✓ 所有验证通过"
 
-      - name: Upload signed DMG
+      - name: Upload signed DMG (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
         with:
-          name: EduClaw-${{ github.event.inputs.version }}-signed
+          name: EduClaw-${{ github.event.inputs.version }}-${{ matrix.arch }}
           path: output/*.dmg
           retention-days: 30
 
