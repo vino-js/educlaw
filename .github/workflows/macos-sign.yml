@@ -90,28 +90,72 @@ jobs:
           
           echo "使用证书：$IDENTITY"
           
-          # 先单独签名 Squirrel.framework 中的可执行文件（Sparkle 自动更新框架）
-          SQUIRREL_FRAMEWORK="$APP_PATH/Contents/Frameworks/Squirrel.framework"
-          if [ -d "$SQUIRREL_FRAMEWORK" ]; then
-            echo "签名 Squirrel.framework..."
-            
-            # 签名 ShipIt
-            SHIPIT="$SQUIRREL_FRAMEWORK/Versions/A/Resources/ShipIt"
-            if [ -f "$SHIPIT" ]; then
-              echo "  签名 ShipIt..."
-              codesign --force --sign "$IDENTITY" --options runtime "$SHIPIT"
-            fi
-            
-            # 签名 Squirrel.framework 本身
-            codesign --force --sign "$IDENTITY" --options runtime "$SQUIRREL_FRAMEWORK"
-            echo "  ✓ Squirrel.framework 签名完成"
+          # 签名所有嵌套的二进制文件和动态库（从内到外）
+          echo "签名嵌套的二进制文件..."
+          
+          # 1. 签名 Resources/binaries 中的 Engine 二进制
+          ENGINE_BINARIES_DIR="$APP_PATH/Contents/Resources/binaries"
+          if [ -d "$ENGINE_BINARIES_DIR" ]; then
+            echo "  签名 Engine 二进制文件..."
+            for bin in "$ENGINE_BINARIES_DIR"/*; do
+              if [ -f "$bin" ] && file "$bin" | grep -q "executable"; then
+                echo "    签名: $(basename $bin)"
+                codesign --force --sign "$IDENTITY" --options runtime "$bin"
+              fi
+            done
           fi
           
-          # 签名整个 .app
+          # 2. 签名 Electron Framework 中的动态库
+          ELECTRON_FRAMEWORK="$APP_PATH/Contents/Frameworks/Electron Framework.framework"
+          if [ -d "$ELECTRON_FRAMEWORK" ]; then
+            echo "  签名 Electron Framework 动态库..."
+            LIBRARIES_DIR="$ELECTRON_FRAMEWORK/Versions/A/Libraries"
+            if [ -d "$LIBRARIES_DIR" ]; then
+              for lib in "$LIBRARIES_DIR"/*.dylib; do
+                if [ -f "$lib" ]; then
+                  echo "    签名: $(basename $lib)"
+                  codesign --force --sign "$IDENTITY" --options runtime "$lib"
+                fi
+              done
+            fi
+          fi
+          
+          # 3. 签名 Squirrel.framework 中的可执行文件
+          SQUIRREL_FRAMEWORK="$APP_PATH/Contents/Frameworks/Squirrel.framework"
+          if [ -d "$SQUIRREL_FRAMEWORK" ]; then
+            echo "  签名 Squirrel.framework..."
+            SHIPIT="$SQUIRREL_FRAMEWORK/Versions/A/Resources/ShipIt"
+            if [ -f "$SHIPIT" ]; then
+              echo "    签名: ShipIt"
+              codesign --force --sign "$IDENTITY" --options runtime "$SHIPIT"
+            fi
+            codesign --force --sign "$IDENTITY" --options runtime "$SQUIRREL_FRAMEWORK"
+          fi
+          
+          # 4. 签名所有其他 framework
+          echo "  签名其他 frameworks..."
+          for framework in "$APP_PATH/Contents/Frameworks"/*.framework; do
+            if [ -d "$framework" ] && [ "$framework" != "$SQUIRREL_FRAMEWORK" ]; then
+              echo "    签名: $(basename $framework)"
+              codesign --force --sign "$IDENTITY" --options runtime "$framework"
+            fi
+          done
+          
+          # 5. 签名所有 Helper app
+          echo "  签名 Helper apps..."
+          for helper in "$APP_PATH/Contents/Frameworks"/*\ Helper*.app; do
+            if [ -d "$helper" ]; then
+              echo "    签名: $(basename $helper)"
+              codesign --force --sign "$IDENTITY" --options runtime "$helper"
+            fi
+          done
+          
+          # 6. 最后签名整个 .app
           echo "签名 .app..."
           codesign --deep --force --sign "$IDENTITY" --options runtime "$APP_PATH"
           
           # 验证
+          echo "验证签名..."
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           echo "✓ .app 签名完成"
 
