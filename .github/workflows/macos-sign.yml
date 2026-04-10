@@ -121,18 +121,23 @@ jobs:
           echo "$SUBMISSION_OUTPUT"
           
           # 提取 submission ID 和状态
-          SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | grep "id:" | head -1 | awk '{print $2}')
-          STATUS=$(echo "$SUBMISSION_OUTPUT" | grep "status:" | awk '{print $2}')
+          SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | grep "id:" | head -1 | sed 's/.*id: //' | tr -d ' ')
+          STATUS=$(echo "$SUBMISSION_OUTPUT" | grep "status:" | sed 's/.*status: //' | tr -d ' ')
           
           echo "Submission ID: $SUBMISSION_ID"
           echo "Status: $STATUS"
           
+          # 无论状态如何，都获取日志以便诊断
+          echo "获取公证日志..."
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --key-id "$APPLE_API_KEY" \
+            --key "$APPLE_API_KEY_PATH" > notary_log.json 2>&1 || true
+          
+          cat notary_log.json
+          
           if [ "$STATUS" = "Invalid" ]; then
-            echo "❌ 公证失败，获取详细日志..."
-            xcrun notarytool log "$SUBMISSION_ID" \
-              --issuer "$APPLE_API_ISSUER" \
-              --key-id "$APPLE_API_KEY" \
-              --key "$APPLE_API_KEY_PATH"
+            echo "❌ 公证失败"
             exit 1
           fi
           
