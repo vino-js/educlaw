@@ -111,6 +111,28 @@ jobs:
           fi
           
           echo "使用证书：$IDENTITY"
+          
+          # 创建 entitlements 文件（Electron 需要 JIT 权限）
+          cat > entitlements.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.cs.allow-jit</key>
+              <true/>
+              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+              <true/>
+              <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+              <true/>
+              <key>com.apple.security.cs.disable-library-validation</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+          
+          ENTITLEMENTS_PATH="entitlements.plist"
+          echo "创建 entitlements 文件: $ENTITLEMENTS_PATH"
+          
           echo "签名嵌套的二进制文件..."
           
           # 1. 签名 Engine 二进制
@@ -149,6 +171,10 @@ jobs:
                 fi
               done
             fi
+            
+            # 签名 Electron Framework 本身（必须先签名子文件）
+            echo "  签名 Electron Framework.framework..."
+            codesign --force --sign "$IDENTITY" --options runtime --entitlements "$ENTITLEMENTS_PATH" "$ELECTRON_FRAMEWORK"
           fi
           
           # 3. 签名 Squirrel.framework
@@ -177,13 +203,13 @@ jobs:
           for helper in "$APP_PATH/Contents/Frameworks"/*\ Helper*.app; do
             if [ -d "$helper" ]; then
               echo "    签名: $(basename $helper)"
-              codesign --force --sign "$IDENTITY" --options runtime "$helper"
+              codesign --force --sign "$IDENTITY" --options runtime --entitlements "$ENTITLEMENTS_PATH" "$helper"
             fi
           done
           
           # 6. 签名整个 .app
           echo "签名 .app..."
-          codesign --deep --force --sign "$IDENTITY" --options runtime "$APP_PATH"
+          codesign --deep --force --sign "$IDENTITY" --options runtime --entitlements "$ENTITLEMENTS_PATH" "$APP_PATH"
           
           echo "验证签名..."
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
