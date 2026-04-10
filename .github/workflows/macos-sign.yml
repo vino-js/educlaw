@@ -4,8 +4,8 @@ on:
   # 手动触发
   workflow_dispatch:
     inputs:
-      dmg_file:
-        description: 'DMG 文件名（放在 unsigned/ 目录下，例如：EduClaw_0.1.0_mac_arm64.dmg）'
+      dmg_url:
+        description: '未签名 DMG 的下载链接（OSS/CDN 地址）'
         required: true
       version:
         description: '版本号（例如：0.1.0）'
@@ -17,25 +17,22 @@ jobs:
     runs-on: macos-latest
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Check DMG file
+      - name: Download unsigned DMG
         run: |
-          DMG_FILE="unsigned/${{ github.event.inputs.dmg_file }}"
+          mkdir -p artifacts
+          echo "下载 DMG 文件..."
+          curl -L "${{ github.event.inputs.dmg_url }}" -o artifacts/unsigned.dmg
           
-          if [ ! -f "$DMG_FILE" ]; then
-            echo "❌ 未找到 DMG 文件: $DMG_FILE"
-            echo ""
-            echo "请将未签名的 DMG 文件放到项目的 unsigned/ 目录下"
-            echo "当前 unsigned/ 目录内容："
-            ls -la unsigned/ 2>/dev/null || echo "  (目录不存在)"
+          # 检查文件大小
+          SIZE=$(stat -f%z artifacts/unsigned.dmg)
+          echo "文件大小: $SIZE bytes"
+          
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "❌ 文件太小，可能下载失败"
             exit 1
           fi
           
-          echo "✓ 找到 DMG 文件: $DMG_FILE"
-          mkdir -p artifacts
-          cp "$DMG_FILE" artifacts/unsigned.dmg
+          echo "✓ 下载完成"
           ls -la artifacts/
 
       - name: Import signing certificate
