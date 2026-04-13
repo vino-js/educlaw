@@ -221,7 +221,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           echo "✓ .app 签名完成"
 
-      - name: Create DMG, notarize and staple (${{ matrix.arch }})
+      - name: Create ZIP and DMG, notarize and staple (${{ matrix.arch }})
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -230,9 +230,21 @@ jobs:
           cd build
           
           APP_PATH=$(find . -name "*.app" -type d | head -1)
+          ZIP_NAME="EduClaw_${{ github.event.inputs.version }}_mac_${{ matrix.arch }}.zip"
           DMG_NAME="EduClaw_${{ github.event.inputs.version }}_mac_${{ matrix.arch }}.dmg"
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
           
+          # 1. 创建 ZIP（用于 electron-updater 增量更新）
+          echo "创建 ZIP..."
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_NAME"
+          echo "✓ ZIP 创建完成"
+          
+          # 2. 签名 ZIP
+          echo "签名 ZIP..."
+          codesign --force --sign "$IDENTITY" "$ZIP_NAME"
+          echo "✓ ZIP 签名完成"
+          
+          # 3. 创建 DMG
           echo "创建 DMG..."
           mkdir -p dmg_temp
           cp -R "$APP_PATH" dmg_temp/
@@ -241,10 +253,12 @@ jobs:
           rm -rf dmg_temp
           echo "✓ DMG 创建完成"
           
+          # 4. 签名 DMG
           echo "签名 DMG 容器..."
           codesign --force --sign "$IDENTITY" "$DMG_NAME"
           echo "✓ DMG 签名完成"
           
+          # 5. 公证 DMG
           echo "公证 DMG..."
           SUBMISSION_OUTPUT=$(xcrun notarytool submit "$DMG_NAME" --wait \
             --issuer "$APPLE_API_ISSUER" \
@@ -287,6 +301,7 @@ jobs:
           done
           
           mkdir -p ../output
+          mv "$ZIP_NAME" ../output/
           mv "$DMG_NAME" ../output/
           
           ls -la ../output/
@@ -310,12 +325,14 @@ jobs:
           
           echo "✓ 所有验证通过"
 
-      - name: Upload signed DMG to GitHub Release (${{ matrix.arch }})
+      - name: Upload signed DMG and ZIP to GitHub Release (${{ matrix.arch }})
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: EduClaw v${{ github.event.inputs.version }}
-          files: output/*.dmg
+          files: |
+            output/*.dmg
+            output/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
