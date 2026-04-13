@@ -230,7 +230,7 @@ jobs:
           cd build
           
           APP_PATH=$(find . -name "*.app" -type d | head -1)
-          DMG_NAME="EduClaw_${{ github.event.inputs.version }}_${{ matrix.arch }}.dmg"
+          DMG_NAME="EduClaw_${{ github.event.inputs.version }}_mac_${{ matrix.arch }}.dmg"
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
           
           echo "创建 DMG..."
