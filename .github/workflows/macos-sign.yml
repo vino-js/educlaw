@@ -3,61 +3,50 @@ name: macOS Sign & Notarize
 on:
   workflow_dispatch:
     inputs:
-      arm64_url:
-        description: 'ARM64 ZIP 下载链接'
-        required: false
-      x64_url:
-        description: 'x64 ZIP 下载链接'
-        required: false
       version:
-        description: '版本号（例如：0.1.0）'
+        description: '版本号（例如：0.1.2）'
         required: true
-        default: '0.1.0'
+        default: '0.1.2'
 
 permissions:
   contents: write
 
-jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - id: set-matrix
-        run: |
-          # 构建矩阵，只包含有 URL 的架构
-          ARCHS=""
-          if [ -n "${{ github.event.inputs.arm64_url }}" ]; then
-            ARCHS="${ARCHS}{\"arch\":\"arm64\",\"url\":\"${{ github.event.inputs.arm64_url }}\"},"
-          fi
-          if [ -n "${{ github.event.inputs.x64_url }}" ]; then
-            ARCHS="${ARCHS}{\"arch\":\"x64\",\"url\":\"${{ github.event.inputs.x64_url }}\"},"
-          fi
-          # 移除末尾逗号
-          ARCHS="${ARCHS%,}"
-          echo "matrix={\"include\":[$ARCHS]}" >> $GITHUB_OUTPUT
+env:
+  OSS_BASE_URL: https://client.cxeduclaw.com/desktop/releases/mac
 
+jobs:
   sign-and-notarize:
-    needs: prepare
     runs-on: macos-latest
     strategy:
-      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      matrix:
+        arch: [arm64, x64]
       fail-fast: false
     
     steps:
-      - name: Download and extract app (${{ matrix.arch }})
+      - name: Download unsigned files (${{ matrix.arch }})
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
           mkdir -p build
-          echo "下载 ${{ matrix.arch }} ZIP 文件..."
-          curl -L "${{ matrix.url }}" -o build/unsigned.zip
+          
+          # 下载未签名的 ZIP
+          ZIP_URL="${{ env.OSS_BASE_URL }}/${ARCH}/EduClaw_${VERSION}_mac_${ARCH}_unsigned.zip"
+          echo "下载 ZIP: $ZIP_URL"
+          curl -L "$ZIP_URL" -o build/unsigned.zip
           
           SIZE=$(stat -f%z build/unsigned.zip)
-          echo "文件大小: $SIZE bytes"
+          echo "ZIP 文件大小: $SIZE bytes"
           
           if [ "$SIZE" -lt 1000000 ]; then
-            echo "❌ 文件太小，可能下载失败"
+            echo "❌ ZIP 文件太小，可能下载失败"
             exit 1
           fi
+          
+          # 下载未签名的 yml（包含 releaseNotes）
+          YML_URL="${{ env.OSS_BASE_URL }}/${ARCH}/latest-unsigned.yml"
+          echo "下载 YML: $YML_URL"
+          curl -L "$YML_URL" -o build/latest-unsigned.yml || echo "警告: yml 下载失败，将使用默认 releaseNotes"
           
           echo "✓ 下载完成，开始解压..."
           cd build
@@ -300,7 +289,7 @@ jobs:
             fi
           done
           
-          # 6. 生成 latest-mac.yml（包含正确的 sha512）
+          # 6. 生成 latest-mac.yml（包含正确的 sha512 和原始 releaseNotes）
           # 文件名加架构后缀，避免并行构建时互相覆盖
           YML_NAME="latest-mac-${{ matrix.arch }}.yml"
           echo "生成 $YML_NAME..."
@@ -309,6 +298,16 @@ jobs:
           DMG_SHA512=$(shasum -a 512 "$DMG_NAME" | awk '{print $1}' | xxd -r -p | base64)
           DMG_SIZE=$(stat -f%z "$DMG_NAME")
           RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          
+          # 从下载的 yml 中提取 releaseNotes
+          RELEASE_NOTES="修复了很多bug，优化了界面，提升了性能，增加了新功能"
+          if [ -f "latest-unsigned.yml" ]; then
+            EXTRACTED_NOTES=$(grep "releaseNotes:" latest-unsigned.yml | sed "s/releaseNotes: *//" | tr -d "'" | tr -d '"')
+            if [ -n "$EXTRACTED_NOTES" ]; then
+              RELEASE_NOTES="$EXTRACTED_NOTES"
+            fi
+          fi
+          echo "使用 releaseNotes: $RELEASE_NOTES"
           
           cat > "$YML_NAME" << EOF
           version: ${{ github.event.inputs.version }}
@@ -322,6 +321,7 @@ jobs:
           path: $ZIP_NAME
           sha512: $ZIP_SHA512
           releaseDate: '$RELEASE_DATE'
+          releaseNotes: '$RELEASE_NOTES'
           EOF
           
           echo "$YML_NAME 内容:"
@@ -364,6 +364,41 @@ jobs:
             output/latest-mac-*.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to Aliyun OSS (${{ matrix.arch }})
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ secrets.OSS_BUCKET }}
+          OSS_REGION: ${{ secrets.OSS_REGION }}
+        run: |
+          # 安装 ossutil
+          curl -L https://gosspublic.alicdn.com/ossutil/1.7.18/ossutil-v1.7.18-mac-amd64.zip -o ossutil.zip
+          unzip ossutil.zip
+          chmod +x ossutil-v1.7.18-mac-amd64/ossutil
+          OSS_UTIL="$(pwd)/ossutil-v1.7.18-mac-amd64/ossutil"
+          
+          # 配置 ossutil
+          $OSS_UTIL config -e "https://$OSS_REGION.aliyuncs.com" -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET"
+          
+          cd output
+          
+          # 上传 ZIP
+          ZIP_FILE=$(find . -name "*.zip" | head -1)
+          echo "上传 ZIP: $ZIP_FILE -> oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$(basename $ZIP_FILE)"
+          $OSS_UTIL cp "$ZIP_FILE" "oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$(basename $ZIP_FILE)" -f
+          
+          # 上传 DMG
+          DMG_FILE=$(find . -name "*.dmg" | head -1)
+          echo "上传 DMG: $DMG_FILE -> oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$(basename $DMG_FILE)"
+          $OSS_UTIL cp "$DMG_FILE" "oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$(basename $DMG_FILE)" -f
+          
+          # 上传 latest-mac.yml（重命名为标准名称）
+          YML_FILE=$(find . -name "latest-mac-*.yml" | head -1)
+          echo "上传 yml: $YML_FILE -> oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/latest-mac.yml"
+          $OSS_UTIL cp "$YML_FILE" "oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/latest-mac.yml" -f
+          
+          echo "✓ OSS 上传完成"
 
       - name: Cleanup
         if: always()
