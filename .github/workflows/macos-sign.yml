@@ -378,20 +378,27 @@ jobs:
           chmod +x ossutil-v1.7.18-mac-amd64/ossutil
           OSS_UTIL="$(pwd)/ossutil-v1.7.18-mac-amd64/ossutil"
           
+          # 验证 OSS_REGION 格式（应该是 oss-cn-shanghai 这样的格式，不带 bucket）
+          echo "OSS_REGION: $OSS_REGION"
+          echo "OSS_BUCKET: $OSS_BUCKET"
+          
           # 配置 ossutil
+          # endpoint 格式: https://oss-cn-shanghai.aliyuncs.com
           $OSS_UTIL config -e "https://$OSS_REGION.aliyuncs.com" -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET"
           
           cd output
           
           # 上传 ZIP
           ZIP_FILE=$(find . -name "*.zip" | head -1)
-          echo "上传 ZIP: $ZIP_FILE -> oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$(basename $ZIP_FILE)"
-          $OSS_UTIL cp "$ZIP_FILE" "oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$(basename $ZIP_FILE)" -f
+          ZIP_BASENAME=$(basename "$ZIP_FILE")
+          echo "上传 ZIP: $ZIP_FILE -> oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$ZIP_BASENAME"
+          $OSS_UTIL cp "$ZIP_FILE" "oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$ZIP_BASENAME" -f
           
           # 上传 DMG
           DMG_FILE=$(find . -name "*.dmg" | head -1)
-          echo "上传 DMG: $DMG_FILE -> oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$(basename $DMG_FILE)"
-          $OSS_UTIL cp "$DMG_FILE" "oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$(basename $DMG_FILE)" -f
+          DMG_BASENAME=$(basename "$DMG_FILE")
+          echo "上传 DMG: $DMG_FILE -> oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$DMG_BASENAME"
+          $OSS_UTIL cp "$DMG_FILE" "oss://$OSS_BUCKET/desktop/releases/mac/${{ matrix.arch }}/$DMG_BASENAME" -f
           
           # 上传 latest-mac.yml（重命名为标准名称）
           YML_FILE=$(find . -name "latest-mac-*.yml" | head -1)
