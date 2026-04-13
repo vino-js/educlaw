@@ -218,7 +218,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           echo "✓ .app 签名完成"
 
-      - name: Create and notarize DMG (${{ matrix.arch }})
+      - name: Notarize app and staple (${{ matrix.arch }})
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -226,25 +226,16 @@ jobs:
         run: |
           cd build
           
-          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
-          
           APP_PATH=$(find . -name "*.app" -type d | head -1)
           DMG_NAME="EduClaw_${{ github.event.inputs.version }}_${{ matrix.arch }}.dmg"
           
-          echo "创建 DMG..."
-          
+          echo "创建临时 DMG 用于公证..."
           mkdir -p dmg_temp
           cp -R "$APP_PATH" dmg_temp/
           ln -s /Applications dmg_temp/Applications
-          
           hdiutil create -volname "EduClaw" -srcfolder dmg_temp -ov -format UDZO "$DMG_NAME"
           rm -rf dmg_temp
-          
-          echo "✓ DMG 创建完成: $DMG_NAME"
-          
-          echo "签名 DMG..."
-          codesign --force --sign "$IDENTITY" "$DMG_NAME"
-          echo "✓ DMG 签名完成"
+          echo "✓ 临时 DMG 创建完成: $DMG_NAME"
           
           echo "公证 DMG..."
           SUBMISSION_OUTPUT=$(xcrun notarytool submit "$DMG_NAME" --wait \
@@ -275,9 +266,7 @@ jobs:
           
           echo "✓ 公证完成"
           
-          # 先对 .app 进行 staple（在打包成 DMG 之前）
-          echo "Staple .app..."
-          # 重试 3 次，因为网络可能不稳定
+          echo "Staple .app（在重建 DMG 之前）..."
           for i in 1 2 3; do
             echo "  尝试 staple .app (第 $i 次)..."
             if xcrun stapler staple "$APP_PATH" 2>&1; then
@@ -288,6 +277,21 @@ jobs:
               sleep 5
             fi
           done
+          
+          echo "用已 staple 的 .app 重建 DMG..."
+          rm -f "$DMG_NAME"
+          mkdir -p dmg_temp
+          cp -R "$APP_PATH" dmg_temp/
+          ln -s /Applications dmg_temp/Applications
+          hdiutil create -volname "EduClaw" -srcfolder dmg_temp -ov -format UDZO "$DMG_NAME"
+          rm -rf dmg_temp
+          echo "✓ 重建 DMG 完成（包含已 staple 的 .app）"
+          
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
+          
+          echo "签名 DMG 容器..."
+          codesign --force --sign "$IDENTITY" "$DMG_NAME"
+          echo "✓ DMG 容器签名完成"
           
           echo "Staple DMG..."
           for i in 1 2 3; do
@@ -324,12 +328,14 @@ jobs:
           
           echo "✓ 所有验证通过"
 
-      - name: Upload signed DMG (${{ matrix.arch }})
-        uses: actions/upload-artifact@v4
+      - name: Upload signed DMG to GitHub Release (${{ matrix.arch }})
+        uses: softprops/action-gh-release@v2
         with:
-          name: EduClaw-${{ github.event.inputs.version }}-${{ matrix.arch }}
-          path: output/*.dmg
-          retention-days: 30
+          tag_name: v${{ github.event.inputs.version }}
+          name: EduClaw v${{ github.event.inputs.version }}
+          files: output/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cleanup
         if: always()

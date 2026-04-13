@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"path": "../../../claw_engine"
+		},
+		{
+			"path": "../../../educlaw"
+		},
+		{
+			"path": "../../../ai-middle-platform/front"
+		},
+		{
+			"path": "../../../vela-ui"
+		},
+		{
+			"path": "../../../ai-middle-platform/app-web-pc"
+		},
+		{
+			"path": "../.."
+		}
+	],
+	"settings": {}
+}
