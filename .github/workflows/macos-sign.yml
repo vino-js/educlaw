@@ -301,14 +301,16 @@ jobs:
           done
           
           # 6. 生成 latest-mac.yml（包含正确的 sha512）
-          echo "生成 latest-mac.yml..."
+          # 文件名加架构后缀，避免并行构建时互相覆盖
+          YML_NAME="latest-mac-${{ matrix.arch }}.yml"
+          echo "生成 $YML_NAME..."
           ZIP_SHA512=$(shasum -a 512 "$ZIP_NAME" | awk '{print $1}' | xxd -r -p | base64)
           ZIP_SIZE=$(stat -f%z "$ZIP_NAME")
           DMG_SHA512=$(shasum -a 512 "$DMG_NAME" | awk '{print $1}' | xxd -r -p | base64)
           DMG_SIZE=$(stat -f%z "$DMG_NAME")
           RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
           
-          cat > latest-mac.yml << EOF
+          cat > "$YML_NAME" << EOF
           version: ${{ github.event.inputs.version }}
           files:
             - url: $ZIP_NAME
@@ -322,13 +324,13 @@ jobs:
           releaseDate: '$RELEASE_DATE'
           EOF
           
-          echo "latest-mac.yml 内容:"
-          cat latest-mac.yml
+          echo "$YML_NAME 内容:"
+          cat "$YML_NAME"
           
           mkdir -p ../output
           mv "$ZIP_NAME" ../output/
           mv "$DMG_NAME" ../output/
-          mv latest-mac.yml ../output/
+          mv "$YML_NAME" ../output/
           
           ls -la ../output/
           echo "✓ 全部完成"
@@ -359,7 +361,7 @@ jobs:
           files: |
             output/*.dmg
             output/*.zip
-            output/latest-mac.yml
+            output/latest-mac-*.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
