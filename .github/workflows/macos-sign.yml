@@ -218,7 +218,67 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           echo "✓ .app 签名完成"
 
-      - name: Notarize app and staple (${{ matrix.arch }})
+      - name: Phase 1 - Notarize and staple .app (${{ matrix.arch }})
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
+        run: |
+          cd build
+          
+          APP_PATH=$(find . -name "*.app" -type d | head -1)
+          
+          echo "=== 阶段 1：公证 .app（通过 zip 提交）==="
+          
+          echo "打包 .app 为 zip..."
+          ditto -c -k --keepParent "$APP_PATH" app_notarize.zip
+          echo "✓ zip 创建完成"
+          
+          echo "公证 .app..."
+          SUBMISSION_OUTPUT=$(xcrun notarytool submit app_notarize.zip --wait \
+            --issuer "$APPLE_API_ISSUER" \
+            --key-id "$APPLE_API_KEY" \
+            --key "$APPLE_API_KEY_PATH" 2>&1)
+          
+          echo "$SUBMISSION_OUTPUT"
+          
+          SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | grep "id:" | head -1 | sed 's/.*id: //' | tr -d ' ')
+          STATUS=$(echo "$SUBMISSION_OUTPUT" | grep "status:" | sed 's/.*status: //' | tr -d ' ')
+          
+          echo "Submission ID: $SUBMISSION_ID"
+          echo "Status: $STATUS"
+          
+          echo "获取公证日志..."
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --key-id "$APPLE_API_KEY" \
+            --key "$APPLE_API_KEY_PATH" > notary_log_app.json 2>&1 || true
+          
+          cat notary_log_app.json
+          
+          if [ "$STATUS" = "Invalid" ]; then
+            echo "❌ .app 公证失败"
+            exit 1
+          fi
+          
+          echo "✓ .app 公证完成"
+          
+          echo "Staple .app..."
+          for i in 1 2 3; do
+            echo "  尝试 staple .app (第 $i 次)..."
+            if xcrun stapler staple "$APP_PATH" 2>&1; then
+              echo "  ✓ .app Staple 成功"
+              break
+            else
+              echo "  第 $i 次尝试失败，等待 5 秒后重试..."
+              sleep 5
+            fi
+          done
+          
+          rm -f app_notarize.zip
+          echo "=== 阶段 1 完成 ==="
+
+      - name: Phase 2 - Create, notarize and staple DMG (${{ matrix.arch }})
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -228,14 +288,21 @@ jobs:
           
           APP_PATH=$(find . -name "*.app" -type d | head -1)
           DMG_NAME="EduClaw_${{ github.event.inputs.version }}_${{ matrix.arch }}.dmg"
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
           
-          echo "创建临时 DMG 用于公证..."
+          echo "=== 阶段 2：创建 DMG 并公证 ==="
+          
+          echo "用已 staple 的 .app 创建 DMG..."
           mkdir -p dmg_temp
           cp -R "$APP_PATH" dmg_temp/
           ln -s /Applications dmg_temp/Applications
           hdiutil create -volname "EduClaw" -srcfolder dmg_temp -ov -format UDZO "$DMG_NAME"
           rm -rf dmg_temp
-          echo "✓ 临时 DMG 创建完成: $DMG_NAME"
+          echo "✓ DMG 创建完成（包含已 staple 的 .app）"
+          
+          echo "签名 DMG 容器..."
+          codesign --force --sign "$IDENTITY" "$DMG_NAME"
+          echo "✓ DMG 容器签名完成"
           
           echo "公证 DMG..."
           SUBMISSION_OUTPUT=$(xcrun notarytool submit "$DMG_NAME" --wait \
@@ -255,43 +322,16 @@ jobs:
           xcrun notarytool log "$SUBMISSION_ID" \
             --issuer "$APPLE_API_ISSUER" \
             --key-id "$APPLE_API_KEY" \
-            --key "$APPLE_API_KEY_PATH" > notary_log.json 2>&1 || true
+            --key "$APPLE_API_KEY_PATH" > notary_log_dmg.json 2>&1 || true
           
-          cat notary_log.json
+          cat notary_log_dmg.json
           
           if [ "$STATUS" = "Invalid" ]; then
-            echo "❌ 公证失败"
+            echo "❌ DMG 公证失败"
             exit 1
           fi
           
-          echo "✓ 公证完成"
-          
-          echo "Staple .app（在重建 DMG 之前）..."
-          for i in 1 2 3; do
-            echo "  尝试 staple .app (第 $i 次)..."
-            if xcrun stapler staple "$APP_PATH" 2>&1; then
-              echo "  ✓ .app Staple 成功"
-              break
-            else
-              echo "  第 $i 次尝试失败，等待 5 秒后重试..."
-              sleep 5
-            fi
-          done
-          
-          echo "用已 staple 的 .app 重建 DMG..."
-          rm -f "$DMG_NAME"
-          mkdir -p dmg_temp
-          cp -R "$APP_PATH" dmg_temp/
-          ln -s /Applications dmg_temp/Applications
-          hdiutil create -volname "EduClaw" -srcfolder dmg_temp -ov -format UDZO "$DMG_NAME"
-          rm -rf dmg_temp
-          echo "✓ 重建 DMG 完成（包含已 staple 的 .app）"
-          
-          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F '"' '{print $2}')
-          
-          echo "签名 DMG 容器..."
-          codesign --force --sign "$IDENTITY" "$DMG_NAME"
-          echo "✓ DMG 容器签名完成"
+          echo "✓ DMG 公证完成"
           
           echo "Staple DMG..."
           for i in 1 2 3; do
@@ -309,6 +349,7 @@ jobs:
           mv "$DMG_NAME" ../output/
           
           ls -la ../output/
+          echo "=== 阶段 2 完成 ==="
 
       - name: Verify (${{ matrix.arch }})
         run: |
