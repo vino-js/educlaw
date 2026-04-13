@@ -300,9 +300,35 @@ jobs:
             fi
           done
           
+          # 6. 生成 latest-mac.yml（包含正确的 sha512）
+          echo "生成 latest-mac.yml..."
+          ZIP_SHA512=$(shasum -a 512 "$ZIP_NAME" | awk '{print $1}' | xxd -r -p | base64)
+          ZIP_SIZE=$(stat -f%z "$ZIP_NAME")
+          DMG_SHA512=$(shasum -a 512 "$DMG_NAME" | awk '{print $1}' | xxd -r -p | base64)
+          DMG_SIZE=$(stat -f%z "$DMG_NAME")
+          RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          
+          cat > latest-mac.yml << EOF
+          version: ${{ github.event.inputs.version }}
+          files:
+            - url: $ZIP_NAME
+              sha512: $ZIP_SHA512
+              size: $ZIP_SIZE
+            - url: $DMG_NAME
+              sha512: $DMG_SHA512
+              size: $DMG_SIZE
+          path: $ZIP_NAME
+          sha512: $ZIP_SHA512
+          releaseDate: '$RELEASE_DATE'
+          EOF
+          
+          echo "latest-mac.yml 内容:"
+          cat latest-mac.yml
+          
           mkdir -p ../output
           mv "$ZIP_NAME" ../output/
           mv "$DMG_NAME" ../output/
+          mv latest-mac.yml ../output/
           
           ls -la ../output/
           echo "✓ 全部完成"
@@ -325,7 +351,7 @@ jobs:
           
           echo "✓ 所有验证通过"
 
-      - name: Upload signed DMG and ZIP to GitHub Release (${{ matrix.arch }})
+      - name: Upload signed DMG, ZIP and latest-mac.yml to GitHub Release (${{ matrix.arch }})
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.version }}
@@ -333,6 +359,7 @@ jobs:
           files: |
             output/*.dmg
             output/*.zip
+            output/latest-mac.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
